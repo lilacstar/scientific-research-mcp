@@ -1,0 +1,27 @@
+# 敏感信息
+.env
+.env.local
+.env.*.local
+
+# 依赖
+node_modules/
+mcp/node_modules/
+
+# 论文工作区（可能包含未发表的论文）
+paper/
+
+# 备份文件
+*.backup.*
+backups/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# 缓存
+mcp/.cache/
