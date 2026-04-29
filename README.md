@@ -1,6 +1,6 @@
 # Scientific Research MCP Server
 
-> 🎓 基于 AI 的科学论文写作 MCP 服务器，支持文献检索、论文撰写、内容验证、润色导出等全流程功能。
+> 🎓 基于 AI 的科研论文写作 MCP 服务器，支持文献检索、论文撰写、内容验证、润色导出等全流程功能。当前支持Cline中和WorkBuddy中使用，也可基于Cline的MCP服务扩展为其他通用MCP服务。
 
 [![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -8,7 +8,7 @@
 
 ---
 
-科学论文写作 MCP 服务器，基于方案 A：共享核心 + 双端适配。
+科研论文写作 MCP 服务器，基于方案 A：共享核心 + 双端适配。
 
 **当前版本**：v1.1.0
 
