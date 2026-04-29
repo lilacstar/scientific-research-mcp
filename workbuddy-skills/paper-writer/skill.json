@@ -1,0 +1,25 @@
+{
+  "name": "paper-writer",
+  "version": "1.0.0",
+  "description": "论文写作引擎。撰写论文的各个章节（引言、方法、结果、讨论、结论）。",
+  "author": "Scientific Research MCP",
+  "keywords": ["论文", "写作", "章节"],
+  "sharedCore": "../../shared",
+  "dependencies": {
+    "prompts": ["../../shared/prompts/paper-writer-prompt.md"],
+    "references": [
+      "../../shared/references/style-guide.md",
+      "../../shared/references/chapter-context-rules.md"
+    ]
+  },
+  "capabilities": ["write", "rewrite"],
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "chapter": { "type": "string", "enum": ["intro", "methods", "results", "discussion", "conclusion"] },
+      "contentMaterials": { "type": "string" },
+      "rewrite": { "type": "boolean" }
+    },
+    "required": ["chapter"]
+  }
+}

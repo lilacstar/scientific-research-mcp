@@ -1,0 +1,41 @@
+{
+  "name": "paper-coordinator",
+  "version": "1.0.0",
+  "description": "科学论文写作总协调器。初始化项目、管理进度、推荐下一步操作、合并全文。",
+  "author": "Scientific Research MCP",
+  "keywords": ["论文", "写作", "协调", "进度管理"],
+  "sharedCore": "../../shared",
+  "dependencies": {
+    "prompts": ["../shared/prompts/paper-writer-prompt.md"],
+    "protocols": [
+      "../shared/protocols/progress-update-protocol.md",
+      "../shared/protocols/journal-config-schema.md"
+    ],
+    "references": [
+      "../shared/references/style-guide.md",
+      "../shared/references/chapter-context-rules.md"
+    ]
+  },
+  "capabilities": [
+    "init",
+    "progress",
+    "recommend",
+    "merge",
+    "export",
+    "check-gate",
+    "save-version"
+  ],
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": ["init", "progress", "recommend", "merge", "export", "check-gate", "save-version"]
+      },
+      "paperType": { "type": "string" },
+      "researchTopic": { "type": "string" },
+      "targetJournal": { "type": "string" }
+    },
+    "required": ["action"]
+  }
+}
