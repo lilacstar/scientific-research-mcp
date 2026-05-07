@@ -7,13 +7,14 @@ import * as path from 'path';
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { readMetadata, readFile, writeFile, fileExists } from '../services/file-service.js';
 import { generateContent } from '../services/llm-service.js';
+import { getAbstractWordCountInstruction, getKeywordsInstruction } from '../services/journal-config-service.js';
 
 const PAPER_DIR = process.env.PAPER_DIR || path.join(process.cwd(), 'paper');
 
 /**
  * 生成或重写摘要
  */
-export async function writeAbstract(args: { action: string }) {
+export async function writeAbstract(args) {
   const { action } = args;
 
   try {
@@ -36,6 +37,10 @@ export async function writeAbstract(args: { action: string }) {
       const fullContent = await readFile('draft-full.md');
       const abstractPath = path.join(PAPER_DIR, 'abstract.md');
 
+      // 获取期刊配置的字数和关键词要求
+      const abstractWordCountInstruction = await getAbstractWordCountInstruction();
+      const keywordsInstruction = await getKeywordsInstruction();
+
       const prompt = `请根据以下论文内容生成摘要和标题：
 
 ## 论文内容
@@ -45,11 +50,11 @@ ${fullContent.substring(0, 8000)}
 ## 要求
 
 1. 生成一个简洁有力的论文标题
-2. 撰写200-300字的中文摘要
-3. 提取5个关键词
+2. 撰写中文摘要${abstractWordCountInstruction || '（200-300字）'}
+3. 提取关键词${keywordsInstruction || '（5个）'}
 4. 摘要应包含研究目的、方法、结果和结论`;
 
-      let abstractContent: string;
+      let abstractContent;
       try {
         const response = await generateContent(prompt, '你是一个专业的学术写作助手。');
         abstractContent = response.content;
@@ -88,7 +93,7 @@ ${fullContent.substring(0, 8000)}
       ],
     };
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+    if (error.code === 'ENOENT') {
       return {
         content: [
           {

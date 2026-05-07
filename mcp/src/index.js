@@ -156,7 +156,7 @@ const TOOLS = [
   },
   {
     name: 'verify_content',
-    description: '论文内容准确性与逻辑链验证专家。检查逻辑一致性、事实性陈述可信度、论证链完整性。',
+    description: '论文内容准确性与逻辑链验证专家。检查逻辑一致性、事实性陈述可信度、论证链完整性。支持框架一致性、分类标准、首尾呼应等专项检查。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -169,6 +169,14 @@ const TOOLS = [
           type: 'array',
           items: { type: 'string' },
           description: '定向验证的目标章节列表'
+        },
+        focus: {
+          type: 'array',
+          items: {
+            type: 'string',
+            enum: ['framework', 'classification', 'conclusion', 'relevance', 'logic', 'consistency', 'facts', 'fallacy', 'citation', 'crossref']
+          },
+          description: '验证重点：framework(框架一致性) / classification(分类标准) / conclusion(首尾呼应) / relevance(内容相关性) / logic(论证逻辑) / consistency(内部一致性) / facts(事实性陈述) / fallacy(逻辑谬误) / citation(参考文献) / crossref(交叉验证)'
         }
       },
       required: ['mode']
@@ -219,8 +227,53 @@ const TOOLS = [
     }
   },
   {
+    name: 'verify_framework',
+    description: '框架验证工具。检查论文中核心框架/概念的一致性，生成概念一致性报告，标记前后不一致的表述。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        mode: {
+          type: 'string',
+          enum: ['full'],
+          description: '验证模式：full(全量)'
+        }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'verify_data',
+    description: '数据验证助手。自动提取文中的具体数据（日期、面积、人数等），生成数据核实清单供用户逐项确认。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        mode: {
+          type: 'string',
+          enum: ['full'],
+          description: '验证模式：full(全量)'
+        }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'methodology_checker',
+    description: '方法论审查工具。检查研究方法的完整性和合理性，验证样本选择理由，检查效度/信度论述。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        mode: {
+          type: 'string',
+          enum: ['full'],
+          description: '验证模式：full(全量)'
+        }
+      },
+      required: []
+    }
+  },
+  {
     name: 'verify_citation',
-    description: '引用验证工具。验证论文草稿中的引用是否真实存在，消除 LLM 幻觉。支持 DOI、作者 - 年份、标题等格式的引用。',
+    description: '引用验证工具。验证论文草稿中的引用是否真实存在，消除 LLM 幻觉。支持 DOI、作者 - 年份、标题、GB/T 7714 等格式的引用。支持本地文献库验证（用户提供PDF）。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -231,6 +284,10 @@ const TOOLS = [
         strict_mode: {
           type: 'boolean',
           description: '严格模式：无法验证的引用也标记为可疑（默认 false）'
+        },
+        use_local_library: {
+          type: 'boolean',
+          description: '启用本地文献库验证：检查引用是否在参考文献列表或 reference-papers 目录中存在（默认 true）'
         }
       },
       required: []
@@ -406,6 +463,12 @@ class ScientificResearchMCPServer {
           return await this.handleAbstractWriter(args);
         case 'paper_polisher':
           return await this.handlePaperPolisher(args);
+      case 'methodology_checker':
+          return await this.handleMethodologyChecker(args);
+        case 'verify_data':
+          return await this.handleVerifyData(args);
+        case 'verify_framework':
+          return await this.handleVerifyFramework(args);
         case 'verify_content':
           return await this.handleVerifyContent(args);
         case 'verify_abstract':
@@ -904,15 +967,20 @@ python md2docx.py paper/draft-full.md output/终稿.docx
   }
 
   async checkGate() {
-    // 定稿门控检查
+    // Phase 6 增强：定稿门控检查 - 集成所有验证工具 + 质量报告
     try {
       const metadataPath = path.join(PAPER_DIR, 'metadata.json');
       const progressPath = path.join(PAPER_DIR, 'progress.md');
+      const qualityReportPath = path.join(PAPER_DIR, 'quality-report.md');
       
       const metadata = JSON.parse(await fs.readFile(metadataPath, 'utf-8'));
       const progress = await fs.readFile(progressPath, 'utf-8');
       
       let issues = [];
+      let warnings = [];
+      let scores = {};
+      
+      // ==================== 基础检查 ====================
       
       // 检查 1：验证覆盖率
       if (progress.includes('未执行')) {
@@ -930,14 +998,145 @@ python md2docx.py paper/draft-full.md output/终稿.docx
         issues.push(`⚠️ 存在 ${pendingMatch[1]} 个待人工核查项`);
       }
       
-      if (issues.length === 0) {
+      // ==================== Phase 6 增强：检查各验证结果文件 ====================
+      
+      // 检查 verify_content 结果
+      const verifyContentReport = path.join(PAPER_DIR, 'reports', 'verify-content-report.md');
+      try {
+        await fs.access(verifyContentReport);
+        const content = await fs.readFile(verifyContentReport, 'utf-8');
+        // 统计错误和警告
+        const errors = (content.match(/❌/g) || []).length;
+        const warns = (content.match(/⚠️/g) || []).length;
+        scores.verifyContent = errors === 0 ? 100 : Math.max(0, 100 - errors * 15 - warns * 5);
+        if (errors > 0) {
+          issues.push(`❌ verify_content 发现 ${errors} 个错误`);
+        }
+        if (warns > 0) {
+          warnings.push(`⚠️ verify_content 发现 ${warns} 个警告`);
+        }
+      } catch {
+        warnings.push('⚠️ 未找到 verify_content 验证报告，建议先执行验证');
+      }
+      
+      // 检查 verify_framework 结果
+      const verifyFrameworkReport = path.join(PAPER_DIR, 'reports', 'verify-framework-report.md');
+      try {
+        await fs.access(verifyFrameworkReport);
+        const content = await fs.readFile(verifyFrameworkReport, 'utf-8');
+        const errors = (content.match(/❌/g) || []).length;
+        const warns = (content.match(/⚠️/g) || []).length;
+        scores.frameworkConsistency = errors === 0 ? 100 : Math.max(0, 100 - errors * 20 - warns * 10);
+        if (errors > 0) {
+          issues.push(`❌ 框架一致性检查发现 ${errors} 个问题`);
+        }
+      } catch {
+        warnings.push('⚠️ 未找到 verify_framework 验证报告');
+      }
+      
+      // 检查 verify_citation 结果
+      const verifyCitationReport = path.join(PAPER_DIR, 'reports', 'verify-citation-report.md');
+      try {
+        await fs.access(verifyCitationReport);
+        const content = await fs.readFile(verifyCitationReport, 'utf-8');
+        const notFound = (content.match(/未在本地找到/g) || []).length;
+        scores.citationCoverage = notFound === 0 ? 100 : Math.max(0, 100 - notFound * 10);
+        if (notFound > 0) {
+          warnings.push(`⚠️ 引用验证发现 ${notFound} 条未在本地找到的引用`);
+        }
+      } catch {
+        warnings.push('⚠️ 未找到 verify_citation 验证报告');
+      }
+      
+      // 检查 verify_data 结果
+      const verifyDataReport = path.join(PAPER_DIR, 'reports', 'verify-data-report.md');
+      try {
+        await fs.access(verifyDataReport);
+        const content = await fs.readFile(verifyDataReport, 'utf-8');
+        const pending = (content.match(/\[ \] 待核实/g) || []).length;
+        scores.dataVerification = pending === 0 ? 100 : Math.max(0, 100 - pending * 5);
+        if (pending > 0) {
+          warnings.push(`⚠️ 数据验证发现 ${pending} 项待人工核实`);
+        }
+      } catch {
+        warnings.push('⚠️ 未找到 verify_data 验证报告');
+      }
+      
+      // 检查 methodology_checker 结果
+      const methodologyReport = path.join(PAPER_DIR, 'reports', 'methodology-report.md');
+      try {
+        await fs.access(methodologyReport);
+        const content = await fs.readFile(methodologyReport, 'utf-8');
+        const errors = (content.match(/❌/g) || []).length;
+        scores.methodology = errors === 0 ? 100 : Math.max(0, 100 - errors * 15);
+        if (errors > 0) {
+          warnings.push(`⚠️ 方法论审查发现 ${errors} 个问题`);
+        }
+      } catch {
+        warnings.push('⚠️ 未找到 methodology_checker 审查报告');
+      }
+      
+      // ==================== 计算综合评分 ====================
+      const scoreKeys = Object.keys(scores);
+      const totalScore = scoreKeys.length > 0 
+        ? Math.round(scoreKeys.reduce((sum, k) => sum + scores[k], 0) / scoreKeys.length)
+        : null;
+      
+      if (totalScore !== null) {
+        scores.overall = totalScore;
+      }
+      
+      // ==================== 生成质量报告 ====================
+      const qualityReport = this.generateQualityReport(scores, issues, warnings, progress);
+      await fs.writeFile(qualityReportPath, qualityReport, 'utf-8');
+      
+      // ==================== 判定结果 ====================
+      const hasCriticalIssues = issues.some(i => i.startsWith('❌'));
+      const tooManyWarnings = issues.length + warnings.length > 5;
+      
+      if (hasCriticalIssues) {
         return {
           content: [
             {
               type: 'text',
-              text: `✅ 定稿门控检查通过！
+              text: `❌ 定稿门控检查未通过！
 
-所有检查项均符合要求，可以导出终稿。`,
+**致命问题**：
+${issues.filter(i => i.startsWith('❌')).map(i => `- ${i}`).join('\n')}
+
+**其他问题**：
+${issues.filter(i => i.startsWith('⚠️')).map(i => `- ${i}`).join('\n')}
+
+**警告**：
+${warnings.map(i => `- ${i}`).join('\n')}
+
+${totalScore !== null ? `**综合评分**：${totalScore}/100\n` : ''}
+**建议**：
+1. 优先解决所有致命问题
+2. 处理所有待人工核查项
+3. 重新执行门控检查
+
+质量报告已保存至：${qualityReportPath}`,
+            },
+          ],
+        };
+      } else if (tooManyWarnings) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `⚠️ 定稿门控检查通过但有较多警告
+
+**问题**：
+${issues.map(i => `- ${i}`).join('\n')}
+
+**警告**：
+${warnings.map(i => `- ${i}`).join('\n')}
+
+${totalScore !== null ? `**综合评分**：${totalScore}/100\n` : ''}
+**建议**：建议处理警告后再导出，但不是强制要求。
+
+质量报告已保存至：${qualityReportPath}`,
             },
           ],
         };
@@ -946,16 +1145,23 @@ python md2docx.py paper/draft-full.md output/终稿.docx
           content: [
             {
               type: 'text',
-              text: `❌ 定稿门控检查未通过！
+              text: `✅ 定稿门控检查通过！
 
-**发现的问题**：
-${issues.map(i => `- ${i}`).join('\n')}
+${totalScore !== null ? `**综合评分**：${totalScore}/100\n` : ''}
+所有检查项均符合要求，可以导出终稿。
 
-**建议**：
-1. 执行 verify_content 和 verify_abstract 完成验证
-2. 解决所有致命问题
-3. 处理所有待人工核查项
-4. 重新执行门控检查`,
+${Object.keys(scores).filter(k => k !== 'overall').map(k => {
+  const names = {
+    verifyContent: '内容验证',
+    frameworkConsistency: '框架一致性',
+    citationCoverage: '引用覆盖率',
+    dataVerification: '数据核实率',
+    methodology: '方法论审查'
+  };
+  return `- ${names[k] || k}：${scores[k]}/100`;
+}).join('\n')}
+
+质量报告已保存至：${qualityReportPath}`,
             },
           ],
         };
@@ -976,6 +1182,77 @@ ${issues.map(i => `- ${i}`).join('\n')}
         `门控检查失败：${error instanceof Error ? error.message : String(error)}`
       );
     }
+  }
+  
+  /**
+   * Phase 6：生成论文质量报告
+   */
+  generateQualityReport(scores, issues, warnings, progress) {
+    const today = new Date().toISOString().split('T')[0];
+    
+    const scoreNames = {
+      verifyContent: '内容验证',
+      frameworkConsistency: '框架一致性',
+      citationCoverage: '引用覆盖率',
+      dataVerification: '数据核实率',
+      methodology: '方法论审查',
+      overall: '综合评分'
+    };
+    
+    let report = `# 论文质量报告\n\n`;
+    report += `> 生成日期：${today}\n`;
+    report += `> 说明：本报告由 MCP Server 自动生成，供定稿前参考\n\n`;
+    
+    report += `## 一、综合评分\n\n`;
+    if (scores.overall !== undefined) {
+      const level = scores.overall >= 90 ? '优秀' : scores.overall >= 70 ? '良好' : scores.overall >= 50 ? '合格' : '需改进';
+      report += `**综合评分**：${scores.overall}/100（${level}）\n\n`;
+    }
+    
+    report += `| 指标 | 得分 | 说明 |\n`;
+    report += `|------|------|------|\n`;
+    for (const [key, value] of Object.entries(scores)) {
+      if (key !== 'overall') {
+        report += `| ${scoreNames[key] || key} | ${value}/100 | ${value >= 80 ? '✅' : value >= 60 ? '⚠️' : '❌'} |\n`;
+      }
+    }
+    
+    report += `\n## 二、问题清单\n\n`;
+    if (issues.length === 0 && warnings.length === 0) {
+      report += `暂无问题。\n`;
+    } else {
+      report += `### 问题\n\n`;
+      issues.forEach((issue, i) => {
+        report += `${i + 1}. ${issue}\n`;
+      });
+      
+      report += `\n### 警告\n\n`;
+      warnings.forEach((warning, i) => {
+        report += `${i + 1}. ${warning}\n`;
+      });
+    }
+    
+    report += `\n## 三、改进建议\n\n`;
+    if (scores.verifyContent !== undefined && scores.verifyContent < 80) {
+      report += `- **内容验证**：建议执行 verify_content 重新验证内容准确性\n`;
+    }
+    if (scores.frameworkConsistency !== undefined && scores.frameworkConsistency < 80) {
+      report += `- **框架一致性**：建议执行 verify_framework 检查框架表述是否一致\n`;
+    }
+    if (scores.citationCoverage !== undefined && scores.citationCoverage < 80) {
+      report += `- **引用覆盖率**：建议将文献PDF放入 reference-papers 目录后执行 verify_citation\n`;
+    }
+    if (scores.dataVerification !== undefined && scores.dataVerification < 80) {
+      report += `- **数据核实**：请逐项核实报告中列出的数据\n`;
+    }
+    if (scores.methodology !== undefined && scores.methodology < 80) {
+      report += `- **方法论**：建议执行 methodology_checker 审查研究方法\n`;
+    }
+    
+    report += `\n## 四、验证记录\n\n`;
+    report += progress;
+    
+    return report;
   }
 
   async saveVersion(version, description, sourceFile) {
@@ -1443,6 +1720,27 @@ ${fullContent.substring(0, 20000)}...
     }
   }
 
+  // ==================== Methodology Checker ====================
+
+  async handleMethodologyChecker(args) {
+    const { mode } = args;
+
+    try {
+      // 动态导入 methodology-checker.js
+      const { checkMethodology } = await import('./tools/methodology-checker.js');
+      return await checkMethodology({ mode });
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `❌ 方法论审查失败：${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+
   // ==================== Paper Polisher ====================
 
   async handlePaperPolisher(args) {
@@ -1464,15 +1762,57 @@ ${fullContent.substring(0, 20000)}...
     }
   }
 
+  // ==================== Verify Data ====================
+
+  async handleVerifyData(args) {
+    const { mode } = args;
+
+    try {
+      // 动态导入 verify-data.js
+      const { verifyData } = await import('./tools/verify-data.js');
+      return await verifyData({ mode });
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `❌ 数据验证失败：${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+
+  // ==================== Verify Framework ====================
+
+  async handleVerifyFramework(args) {
+    const { mode } = args;
+
+    try {
+      // 动态导入 verify-framework.js
+      const { verifyFramework } = await import('./tools/verify-framework.js');
+      return await verifyFramework({ mode });
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `❌ 框架验证失败：${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+
   // ==================== Verify Content ====================
 
   async handleVerifyContent(args) {
-    const { mode, target_chapters } = args;
+    const { mode, target_chapters, focus } = args;
 
     try {
       // 动态导入 verify-content.js
       const { verifyContent } = await import('./tools/verify-content.js');
-      return await verifyContent({ mode, target_chapters });
+      return await verifyContent({ mode, target_chapters, focus });
     } catch (error) {
       return {
         content: [
@@ -1514,12 +1854,12 @@ MCP Server 已准备好接收验证请求。`,
   // ==================== Verify Citation ====================
 
   async handleVerifyCitation(args) {
-    const { draft_content, strict_mode } = args;
+    const { draft_content, strict_mode, use_local_library } = args;
 
     try {
       // 导入 verify-citation.ts 中的函数
       const { verifyCitations } = await import('./tools/verify-citation.js');
-      return await verifyCitations({ draft_content, strict_mode });
+      return await verifyCitations({ draft_content, strict_mode, use_local_library });
     } catch (error) {
       if (error.code === 'ENOENT' || error.message.includes('Cannot find module')) {
         // 如果模块不存在，返回提示信息

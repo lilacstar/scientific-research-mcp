@@ -5,8 +5,9 @@
 
 import * as path from 'path';
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
-import { readMetadata, readFile, writeFile, fileExists, autoBackup } from '../services/file-service.js';
+import { readMetadata, readFile, writeFile, fileExists, autoBackup, autoArchiveOldVersions } from '../services/file-service.js';
 import { generateContent } from '../services/llm-service.js';
+import { getWordLimitInstruction, getHeadingFormatInstruction, getFullJournalRequirements } from '../services/journal-config-service.js';
 
 const PAPER_DIR = process.env.PAPER_DIR || path.join(process.cwd(), 'paper');
 
@@ -73,6 +74,10 @@ function countChineseChars(text) {
 async function polishChunk(chunk, focus, chunkIndex, totalChunks, mode = 'standard') {
   const isConcise = mode === 'concise';
   
+  // 获取期刊配置提示
+  const wordLimitInstruction = await getWordLimitInstruction();
+  const headingFormatInstruction = await getHeadingFormatInstruction();
+  
   const conciseInstruction = isConcise ? `
 
 ## 精简要求（重要）
@@ -101,6 +106,7 @@ ${chunk}
 4. 检查格式一致性
 5. 验证引用格式（GB/T 7714）
 6. 保持原文的章节结构和标题不变${conciseInstruction}
+${wordLimitInstruction}${headingFormatInstruction}
 7. 只返回润色后的内容，不要添加任何额外说明`;
 
   try {
@@ -203,8 +209,42 @@ export async function polishPaper(args) {
 
     // 写入润色后的内容前自动备份
     const outputFile = scope === 'full' ? 'draft-full-polished.md' : `draft-${scope}-polished.md`;
-    await autoBackup(outputFile);
+    const backupResult = await autoBackup(outputFile);
+    
+    // 检查备份结果，备份失败则中止操作
+    if (!backupResult.success) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `❌ 润色操作已取消！备份失败，无法安全修改文件。
+
+**失败原因**：${backupResult.reason}
+
+**请检查**：
+1. 磁盘空间是否充足
+2. 文件权限是否正确
+3. 文件是否被其他程序占用
+4. 文件路径是否正确
+
+备份成功后才能继续修改。`,
+          },
+        ],
+      };
+    }
+    
     await writeFile(outputFile, polishedContent);
+    
+    // 自动归档旧版本到 versions/ 目录
+    try {
+      const { autoArchiveOldVersions } = await import('../services/file-service.js');
+      const archiveResult = await autoArchiveOldVersions(outputFile);
+      if (archiveResult.success && archiveResult.archivedFiles.length > 0) {
+        statusMessage += `\n\n📦 **自动归档**：已将旧版本归档至 versions/ 目录（${archiveResult.archivedFiles.join(', ')}）`;
+      }
+    } catch {
+      // 归档失败不影响主流程
+    }
 
     // 构建状态消息
     const modeLabel = mode === 'concise' ? '精简模式（润色+压缩）' : '标准模式（仅润色）';
@@ -246,6 +286,22 @@ export async function polishPaper(args) {
     }
 
     statusMessage += `\n\n**提示**：请检查润色后的内容，确认无误后替换原文。`;
+
+    // 检查是否符合期刊字数要求
+    const journalConfig = await (async () => {
+      try {
+        const { readJournalConfig } = await import('../services/journal-config-service.js');
+        return await readJournalConfig();
+      } catch {
+        return null;
+      }
+    })();
+    
+    if (journalConfig && journalConfig.maxWords) {
+      const wordLimit = journalConfig.maxWords;
+      const wordStatus = polishedWordCount <= wordLimit ? '✅' : '❌';
+      statusMessage += `\n\n### 📋 期刊字数检查\n${wordStatus} 当前字数 ${polishedWordCount.toLocaleString()} 字，期刊限制 ≤${wordLimit.toLocaleString()} 字${polishedWordCount > wordLimit ? `（**超出 ${wordLimit - polishedWordCount > 0 ? (polishedWordCount - wordLimit).toLocaleString() : '0'} 字**）` : ''}`;
+    }
 
     // 版本保存提示
     statusMessage += `\n\n💡 **版本管理**：建议使用 \`paper_coordinator\` 的 \`save_version\` 操作保存当前版本。`;

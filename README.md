@@ -1,5 +1,13 @@
 # Scientific Research MCP Server
 
+> 🎓 基于 AI 的科学论文写作 MCP 服务器，支持文献检索、论文撰写、内容验证、润色导出等全流程功能。
+
+[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](CHANGELOG.md)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D18.0-brightgreen.svg)]()
+
+---
+
 科学论文写作 MCP 服务器，基于方案 A：共享核心 + 双端适配。
 
 **当前版本**：v1.1.0
@@ -93,14 +101,81 @@ scientific-research-mcp/
 
 ## 安装配置
 
-### 1. 安装依赖
+### 1. 克隆项目
+
+```bash
+git clone https://github.com/lilacstar/scientific-research-mcp.git
+cd scientific-research-mcp
+```
+
+### 2. 安装依赖
 
 ```bash
 cd mcp
 npm install
 ```
 
-### 2. 配置 cline_mcp_settings.json
+### 3. 配置个人信息
+
+本项目使用 `.env.local` 文件管理个人敏感信息，该文件已被 `.gitignore` 排除，不会被提交到 GitHub。
+
+```bash
+# 复制配置模板
+cp .env.local.example .env.local
+
+# 编辑配置文件
+# Windows
+notepad .env.local
+# macOS/Linux
+nano .env.local
+```
+
+### 4. 配置项说明
+
+#### LLM API 配置（必填）
+
+本项目**支持任何兼容 OpenAI API 格式的大模型**，不限定阿里云。
+
+| 变量名 | 说明 | 示例 |
+|--------|------|------|
+| `LLM_API_BASE_URL` | API 端点地址 | 见下方支持列表 |
+| `LLM_API_KEY` | API 密钥 | 你的 API Key |
+| `LLM_MODEL` | 模型名称 | qwen-plus, gpt-4 等 |
+
+**支持的 LLM API 提供商**：
+
+| 提供商 | API_BASE_URL | 模型示例 |
+|--------|-------------|---------|
+| 阿里云 DashScope | `https://dashscope.aliyuncs.com/compatible-mode/v1` | qwen-plus, qwen-turbo, qwen-max |
+| OpenAI | `https://api.openai.com/v1` | gpt-4, gpt-3.5-turbo |
+| DeepSeek | `https://api.deepseek.com/v1` | deepseek-chat |
+| 智谱 AI | `https://open.bigmodel.cn/api/paas/v4` | glm-4, glm-4-plus |
+| Ollama (本地) | `http://localhost:11434/v1` | llama3, mistral |
+| 硅基流动 | `https://api.siliconflow.cn/v1` | 各种开源模型 |
+
+#### GitHub 配置（可选）
+
+仅用于脚本批量上传文件到 GitHub。
+
+| 变量名 | 说明 |
+|--------|------|
+| `GITHUB_TOKEN` | GitHub Personal Access Token |
+| `GITHUB_OWNER` | GitHub 用户名 |
+| `GITHUB_REPO` | GitHub 仓库名 |
+
+**获取 GitHub Token**：
+1. 访问 https://github.com/settings/tokens
+2. 点击 "Generate new token (classic)"
+3. 勾选 `repo` 权限
+4. 复制 Token 到 `.env.local`
+
+#### 企业微信通知（可选）
+
+| 变量名 | 说明 |
+|--------|------|
+| `WECHAT_WEBHOOK_URL` | 企业微信群机器人 Webhook URL |
+
+### 5. 配置 cline_mcp_settings.json
 
 **配置文件位置**：`C:\Users\Think\AppData\Roaming\Code\User\globalStorage\saoudrizwan.claude-dev\settings\cline_mcp_settings.json`
 
@@ -124,7 +199,7 @@ npm install
 
 > **注意**：Cline 扩展的 MCP 配置**不支持** `autoApprove`、`disabled`、`timeout`、`type` 等属性，添加这些属性会导致 "Invalid MCP settings schema" 错误。
 
-### 3. 使用方式
+### 6. 使用方式
 
 在 Cline 中使用 MCP 工具：
 

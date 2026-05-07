@@ -5,12 +5,14 @@
 
 import * as path from 'path';
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
-import { readMetadata, readPromptTemplate, readReference, writeChapterDraft, fileExists, copyFile, autoBackup } from '../services/file-service.js';
+import { readMetadata, readPromptTemplate, readReference, writeChapterDraft, fileExists, copyFile, autoBackup, autoArchiveOldVersions } from '../services/file-service.js';
 import { generateChapterDraft as generateWithLLM } from '../services/llm-service.js';
+import { getWordLimitInstruction, getHeadingFormatInstruction } from '../services/journal-config-service.js';
+import { listStyleReferences, analyzeWritingStyle, generateStyleGuidance, getStyleSummary } from '../services/style-analyzer.js';
 
 const PAPER_DIR = process.env.PAPER_DIR || path.join(process.cwd(), 'paper');
 
-const CHAPTER_NAMES: Record<string, string> = {
+const CHAPTER_NAMES = {
   'intro': '引言',
   'methods': '方法',
   'results': '结果',
@@ -21,11 +23,7 @@ const CHAPTER_NAMES: Record<string, string> = {
 /**
  * 撰写论文章节
  */
-export async function writeChapter(args: {
-  chapter: string;
-  content_materials?: string;
-  rewrite?: boolean;
-}) {
+export async function writeChapter(args) {
   const { chapter, content_materials, rewrite } = args;
 
   try {
@@ -33,6 +31,27 @@ export async function writeChapter(args: {
     const metadata = await readMetadata();
     const chapterName = CHAPTER_NAMES[chapter] || chapter;
     const draftPath = path.join(PAPER_DIR, `draft-${chapter}.md`);
+
+    // 获取期刊配置要求
+    const wordLimitInstruction = await getWordLimitInstruction();
+    const headingFormatInstruction = await getHeadingFormatInstruction();
+
+    // 检查并应用写作风格参考
+    const styleReferences = await listStyleReferences();
+    let styleGuidance = '';
+    let styleSummary = '无风格参考';
+    if (styleReferences.length > 0) {
+      try {
+        const analysisResult = await analyzeWritingStyle(styleReferences);
+        if (analysisResult.success && analysisResult.profiles.length > 0) {
+          const mainProfile = analysisResult.profiles[0].profile;
+          styleGuidance = generateStyleGuidance(mainProfile);
+          styleSummary = getStyleSummary(mainProfile);
+        }
+      } catch {
+        // 风格分析失败，使用默认规范
+      }
+    }
 
     // 检查章节是否已存在
     const exists = await fileExists(`draft-${chapter}.md`);
@@ -63,6 +82,7 @@ export async function writeChapter(args: {
     prompt += `3. 所有断言需有引用支撑\n`;
     prompt += `4. 引用必须来自真实存在的文献，如不确定请标记 [待核实]\n`;
     prompt += `5. 符合${chapterName}的结构要求\n`;
+    prompt += `${wordLimitInstruction}${headingFormatInstruction}\n`;
 
     // 读取写作规范
     try {
@@ -72,8 +92,13 @@ export async function writeChapter(args: {
       // 参考资料不存在，跳过
     }
 
+    // 添加写作风格指导
+    if (styleGuidance) {
+      prompt += `\n${styleGuidance}\n`;
+    }
+
     // 调用 LLM 生成内容
-    let draftContent: string;
+    let draftContent;
     try {
       draftContent = await generateWithLLM(chapter, prompt, metadata);
     } catch (error) {
@@ -82,26 +107,57 @@ export async function writeChapter(args: {
     }
 
     // 写入草稿文件前自动备份
-    await autoBackup(`draft-${chapter}.md`);
+    const backupResult = await autoBackup(`draft-${chapter}.md`);
+    
+    // 检查备份结果，备份失败则中止操作
+    if (!backupResult.success) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `❌ 写作操作已取消！备份失败，无法安全修改文件。
+
+**失败原因**：${backupResult.reason}
+
+**请检查**：
+1. 磁盘空间是否充足
+2. 文件权限是否正确
+3. 文件是否被其他程序占用
+4. 文件路径是否正确
+
+备份成功后才能继续修改。`,
+          },
+        ],
+      };
+    }
+    
     await writeChapterDraft(chapter, draftContent);
 
     // 更新进度
     await updateProgress(chapter);
 
+    let responseText = `✅ ${chapterName}草稿已生成！
+
+**输出文件**：${draftPath}
+
+**写作风格参考**：${styleSummary}
+
+**提示**：建议执行 verify_content 验证内容准确性。`;
+
+    if (styleReferences.length === 0) {
+      responseText += `\n\n💡 **提示**：未找到写作风格参考论文。如需参考特定论文的写作风格，请将PDF文件放入 paper/style-references/ 目录。`;
+    }
+
     return {
       content: [
         {
           type: 'text',
-          text: `✅ ${chapterName}草稿已生成！
-
-**输出文件**：${draftPath}
-
-**提示**：建议执行 verify_content 验证内容准确性。`,
+          text: responseText,
         },
       ],
     };
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+    if (error.code === 'ENOENT') {
       return {
         content: [
           {
@@ -121,8 +177,8 @@ export async function writeChapter(args: {
 /**
  * 获取章节模板（LLM 调用失败时的降级方案）
  */
-function getChapterTemplate(chapter: string): string {
-  const chapterTemplates: Record<string, string> = {
+function getChapterTemplate(chapter) {
+  const chapterTemplates = {
     'intro': `# 引言
 
 ## 研究背景
@@ -206,12 +262,12 @@ function getChapterTemplate(chapter: string): string {
 /**
  * 更新写作进度
  */
-async function updateProgress(chapter: string) {
+async function updateProgress(chapter) {
   try {
     const { readProgress, writeProgress } = await import('../services/file-service.js');
     const progress = await readProgress();
 
-    const chapterStatus: Record<string, string> = {
+    const chapterStatus = {
       'intro': '论文写作',
       'methods': '论文写作',
       'results': '论文写作',

@@ -1,29 +1,82 @@
 # LLM 连接配置指南
 
 > 本指南帮助其他使用者配置自己的大模型连接。
+> 
+> 本项目支持**任何兼容 OpenAI API 格式的大模型**，不限定阿里云。
 
 **版本**：v1.2.0
 
 ---
 
-## 当前配置
+## 快速配置（推荐）
 
-| 配置项 | 说明 |
-|--------|------|
-| API 提供商 | 阿里云 DashScope |
-| 默认模型 | qwen3.5-plus |
-| API 端点 | `https://coding.dashscope.aliyuncs.com/v1/chat/completions` |
-| 环境变量 | `ALIBABA_CLOUD_API_KEY` |
-| 温度（temperature） | 0.7 |
-| 最大 Token（max_tokens） | 4000 |
+本项目使用 `.env.local` 文件统一管理个人配置，包括 LLM API、GitHub Token 等。
+
+### 步骤 1：复制配置模板
+
+```bash
+cp .env.local.example .env.local
+```
+
+### 步骤 2：填写你的 LLM API 信息
+
+编辑 `.env.local` 文件，修改以下三个变量：
+
+```bash
+# API 端点地址
+LLM_API_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+
+# API 密钥
+LLM_API_KEY=your-api-key-here
+
+# 模型名称
+LLM_MODEL=qwen-plus
+```
+
+### 步骤 3：配置 cline_mcp_settings.json
+
+在 `cline_mcp_settings.json` 中引用 `.env.local` 中的环境变量：
+
+```json
+{
+  "mcpServers": {
+    "scientific-research-mcp": {
+      "command": "node",
+      "args": ["d:\\Workspace\\scientific-research-mcp\\mcp\\src\\index.js"],
+      "env": {
+        "LLM_API_BASE_URL": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "LLM_API_KEY": "your-api-key-here",
+        "LLM_MODEL": "qwen-plus"
+      }
+    }
+  }
+}
+```
+
+> **注意**：`.env.local` 文件已被 `.gitignore` 排除，不会被提交到 GitHub。
 
 ---
 
-## 如何修改成你自己的大模型连接
+## 支持的 LLM API 提供商
+
+| 提供商 | API_BASE_URL | 模型示例 |
+|--------|-------------|---------|
+| 阿里云 DashScope | `https://dashscope.aliyuncs.com/compatible-mode/v1` | qwen-plus, qwen-turbo, qwen-max |
+| OpenAI | `https://api.openai.com/v1` | gpt-4, gpt-3.5-turbo |
+| DeepSeek | `https://api.deepseek.com/v1` | deepseek-chat |
+| 智谱 AI | `https://open.bigmodel.cn/api/paas/v4` | glm-4, glm-4-plus |
+| Ollama (本地) | `http://localhost:11434/v1` | llama3, mistral |
+| 硅基流动 | `https://api.siliconflow.cn/v1` | 各种开源模型 |
+
+---
+
+## 旧版配置方式（修改代码）
+
+如果你需要更灵活的控制，可以直接修改代码。
 
 ### 步骤 1：修改 API 端点和模型
 
-编辑 `mcp/src/services/llm-service.js` 文件，修改第 6-7 行：
+编辑 `mcp/src/services/llm-service.js` 文件：
 
 ```javascript
 // 修改前
@@ -37,7 +90,7 @@ const DEFAULT_MODEL = 'gpt-4o';
 
 ### 步骤 2：修改环境变量名称
 
-编辑 `mcp/src/services/llm-service.js` 文件，修改第 41 行：
+编辑 `mcp/src/services/llm-service.js` 文件：
 
 ```javascript
 // 修改前
